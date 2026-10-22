@@ -68,6 +68,10 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
            /usr/local/bin/corepack \
            /opt/yarn*
 
+# Install Cloudflared (Root access needed, so doing this before switching user)
+RUN wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared && \
+    chmod +x /usr/local/bin/cloudflared
+
 # Create unprivileged application user
 RUN addgroup -S -g 1001 youpi && \
     adduser -S -u 1001 -G youpi youpi
