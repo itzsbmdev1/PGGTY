@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto'; // 🔥 YAHAN CRYPTO ADD KIYA HAI
 import { getDatabase, MerchantRepository, SupportTicketRepository } from '@youpi/db';
 import { getAdminToken, safeEqual } from '@youpi/common';
 
@@ -22,10 +23,6 @@ function hasAdminToken(req, url = null, pathname = '') {
   if (match) {
     return safeEqual(match[1].trim(), getAdminToken());
   }
-  // NOTE: the stream token is deliberately NOT accepted from a query parameter. A
-  // credential in the URL ends up in access logs, browser history and Referer headers.
-  // The dashboards now open the stream with fetch() so the token travels in the
-  // Authorization header only.
   return false;
 }
 
@@ -54,12 +51,6 @@ if (!process.env.BASE_PAYMENT_API_URL && typeof process.loadEnvFile === 'functio
 }
 
 export class AdminServer {
-  /**
-   * @param {{
-   *   db?: import('@youpi/db').Database,
-   *   apiBaseUrl?: string
-   * }} options
-   */
   constructor(options = {}) {
     this.db = options.db || getDatabase();
     this.apiBaseUrl = options.apiBaseUrl || process.env.BASE_PAYMENT_API_URL || 'http://localhost:6100';
@@ -75,8 +66,6 @@ export class AdminServer {
     } catch {}
 
     let html = this.template;
-    // Always use empty string '' so client fetch calls hit the merchant admin's own /api proxy!
-    // This completely eliminates CORS errors, tunnel downtime 530s, and cross-origin failures.
     const clientApiBase = '';
     html = html.replaceAll('{{API_BASE_URL}}', clientApiBase);
     return html;
@@ -124,9 +113,50 @@ export class AdminServer {
         return;
       }
 
-      // Merged Control Center Supervisor Proxy: /api/services/* and /api/logs/stream -> Control Center on port 8090
-      // Relaying this unauthenticated would republish process control and every service's
-      // stdout/stderr on the internet-facing admin host, so the admin token is required.
+      // 🔥 NAYA CODE: Create Merchant API
+      if (pathname === '/api/admin/create-merchant' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            const data = new URLSearchParams(body);
+            const business_name = data.get('business_name') || 'New Merchant';
+            const contact_email = data.get('contact_email') || 'admin@domain.com';
+            const contact_phone = data.get('contact_phone') || '9999999999';
+            const webhook_url = data.get('webhook_url') || '';
+
+            const merchantId = crypto.randomUUID();
+            const webhookSecret = crypto.randomBytes(32).toString('hex');
+            const slug = business_name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
+            const branding = JSON.stringify({ primaryColor: "#2563eb", appName: business_name, logoUrl: null });
+
+            this.db.prepare(`
+              INSERT INTO merchants (id, business_name, slug, contact_email, contact_phone, webhook_url, webhook_secret, branding)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(merchantId, business_name, slug, contact_email, contact_phone, webhook_url, webhookSecret, branding);
+
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`
+              <div style="font-family: sans-serif; padding: 20px;">
+                <h2 style="color: green;">Merchant Created Successfully!</h2>
+                <p><b>Business Name:</b> ${business_name}</p>
+                <p><b>Merchant ID:</b> <code style="background: #eee; padding: 5px;">${merchantId}</code></p>
+                <p><b>Webhook Secret:</b> <code style="background: #eee; padding: 5px;">${webhookSecret}</code></p>
+                <p><i>Copy these keys to your CodeIgniter app!</i></p>
+                <br>
+                <a href="/admin" style="padding: 10px 15px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px;">Go Back to Admin</a>
+              </div>
+            `);
+          } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Database Error: ' + error.message);
+          }
+        });
+        return;
+      }
+      // 🔥 NAYA CODE KHATAM
+
+      // Merged Control Center Supervisor Proxy
       if (pathname.startsWith('/api/services') || pathname === '/api/logs/stream') {
         if (!hasAdminToken(req, url, pathname)) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
