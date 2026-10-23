@@ -113,11 +113,11 @@ export class AdminServer {
         return;
       }
 
-      // 🔥 NAYA CODE: Create Merchant API
+     // 🔥 NAYA CODE: Create Merchant API
       if (pathname === '/api/admin/create-merchant' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
+        req.on('end', async () => {  // <-- Dhyan rahe, yahan 'async' add kiya hai taaki await kaam kare
           try {
             const data = new URLSearchParams(body);
             const business_name = data.get('business_name') || 'New Merchant';
@@ -130,10 +130,23 @@ export class AdminServer {
             const slug = business_name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
             const branding = JSON.stringify({ primaryColor: "#2563eb", appName: business_name, logoUrl: null });
 
-            this.db.prepare(`
-              INSERT INTO merchants (id, business_name, slug, contact_email, contact_phone, webhook_url, webhook_secret, branding)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(merchantId, business_name, slug, contact_email, contact_phone, webhook_url, webhookSecret, branding);
+            const sqlBase = `INSERT INTO merchants (id, business_name, slug, contact_email, contact_phone, webhook_url, webhook_secret, branding) VALUES `;
+            const params = [merchantId, business_name, slug, contact_email, contact_phone, webhook_url, webhookSecret, branding];
+
+            // 💡 Universal Database Execution Logic (Postgres/SQLite Dono Ke Liye)
+            if (typeof this.db.query === 'function') {
+                try {
+                    await this.db.query(sqlBase + `($1, $2, $3, $4, $5, $6, $7, $8)`, params);
+                } catch(err) {
+                    await this.db.query(sqlBase + `(?, ?, ?, ?, ?, ?, ?, ?)`, params);
+                }
+            } else if (typeof this.db.run === 'function') {
+                await this.db.run(sqlBase + `(?, ?, ?, ?, ?, ?, ?, ?)`, params);
+            } else if (typeof this.db.execute === 'function') {
+                await this.db.execute(sqlBase + `(?, ?, ?, ?, ?, ?, ?, ?)`, params);
+            } else {
+                throw new Error("Available DB Methods: " + Object.keys(this.db).join(', '));
+            }
 
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(`
@@ -155,7 +168,6 @@ export class AdminServer {
         return;
       }
       // 🔥 NAYA CODE KHATAM
-
       // Merged Control Center Supervisor Proxy
       if (pathname.startsWith('/api/services') || pathname === '/api/logs/stream') {
         if (!hasAdminToken(req, url, pathname)) {
